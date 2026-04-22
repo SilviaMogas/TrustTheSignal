@@ -1,0 +1,136 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* ─── Paper grain texture via SVG noise ────────────────────────────────────── */
+@layer base {
+  :root {
+    --paper-noise: url("data:image/svg+xml,%3Csvg%20xmlns%3D'http%3A//www.w3.org/2000/svg'%20width%3D'300'%20height%3D'300'%3E%3Cfilter%20id%3D'n'%3E%3CfeTurbulence%20type%3D'fractalNoise'%20baseFrequency%3D'0.75'%20numOctaves%3D'4'%20stitchTiles%3D'stitch'/%3E%3CfeColorMatrix%20type%3D'saturate'%20values%3D'0'/%3E%3C/filter%3E%3Crect%20width%3D'300'%20height%3D'300'%20filter%3D'url(%23n)'%20opacity%3D'0.12'/%3E%3C/svg%3E");
+  }
+
+  html {
+    scroll-behavior: smooth;
+  }
+
+  body {
+    background-color: #f4f1ea;
+    background-image: var(--paper-noise);
+    background-repeat: repeat;
+    background-size: 300px 300px;
+    color: #111111;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+
+  /* Focus styles — visible red underline for accessibility */
+  :focus-visible {
+    outline: 2px solid #d62828;
+    outline-offset: 2px;
+  }
+
+  /* Selection */
+  ::selection {
+    background-color: #d62828;
+    color: #f4f1ea;
+  }
+}
+
+/* ─── Typography utilities ─────────────────────────────────────────────────── */
+@layer components {
+
+  /* Dropcap — first letter of a paragraph */
+  .dropcap::first-letter {
+    font-family: var(--font-display), Georgia, serif;
+    font-size: 4.2rem;
+    font-weight: 700;
+    line-height: 0.82;
+    float: left;
+    margin-right: 0.08em;
+    margin-top: 0.06em;
+    color: #d62828;
+    padding-top: 0;
+  }
+
+  /* Double divider — two thin horizontal rules */
+  .divider-double {
+    border-top: 1px solid #111111;
+    padding-top: 3px;
+    border-bottom: 1px solid #111111;
+    height: 5px;
+    margin: 0;
+  }
+
+  /* Halftone photo treatment */
+  .photo-halftone {
+    filter: grayscale(1) contrast(1.12) brightness(0.97);
+  }
+
+  /* Dot overlay for halftone illusion */
+  .photo-wrap {
+    position: relative;
+    overflow: hidden;
+  }
+
+  .photo-wrap::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    background-image: radial-gradient(circle, rgba(0,0,0,0.55) 0.5px, transparent 0.5px);
+    background-size: 3px 3px;
+    pointer-events: none;
+    mix-blend-mode: multiply;
+    opacity: 0.35;
+  }
+
+  /* Classified-ad double border box */
+  .classified-box {
+    border: 6px double #111111;
+  }
+
+  /* Kicker / metadata label */
+  .kicker {
+    font-family: var(--font-meta), 'Arial Narrow', sans-serif;
+    font-size: 0.65rem;
+    font-weight: 600;
+    letter-spacing: 0.2em;
+    text-transform: uppercase;
+  }
+
+  /* Platform button hover state */
+  .platform-icon {
+    color: #111111;
+    transition: color 0.15s ease;
+  }
+
+  .platform-icon:hover {
+    color: #d62828;
+  }
+
+  /* Listen button — outline style */
+  .listen-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.4rem;
+    padding: 0.35rem 0.85rem;
+    border: 1px solid #111111;
+    font-family: var(--font-meta), 'Arial Narrow', sans-serif;
+    font-size: 0.6rem;
+    font-weight: 600;
+    letter-spacing: 0.18em;
+    text-transform: uppercase;
+    color: #111111;
+    background: transparent;
+    transition: background 0.15s ease, color 0.15s ease;
+    white-space: nowrap;
+  }
+
+  .listen-btn:hover {
+    background-color: #111111;
+    color: #f4f1ea;
+  }
+
+  .listen-btn:focus-visible {
+    outline: 2px solid #d62828;
+    outline-offset: 2px;
+  }
+}
