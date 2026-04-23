@@ -69,7 +69,7 @@ export function PlatformLinks() {
     >
       <FadeIn>
         <p className="kicker text-ink-gray text-[0.6rem] text-center mb-8">
-          AVAILABLE ON
+          AVAILABLE ON&nbsp;&middot;&nbsp;<span className="text-ink-gray/50 italic font-body normal-case tracking-normal text-[0.6rem]">coming soon</span>
         </p>
 
         <ul
