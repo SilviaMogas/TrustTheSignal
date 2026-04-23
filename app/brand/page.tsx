@@ -118,8 +118,8 @@ export default function BrandPage() {
                 className="font-display text-ink leading-snug"
                 style={{ fontSize: "clamp(1.6rem, 3vw, 2.6rem)", fontWeight: 700 }}
               >
-                "The best conversations in finance happen behind closed doors.
-                We bring them to you."
+                &ldquo;The best conversations in finance happen behind closed doors.
+                We bring them to you.&rdquo;
               </p>
             </div>
             <div className="space-y-6">
