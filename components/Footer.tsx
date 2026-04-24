@@ -56,7 +56,7 @@ export function Footer() {
                 <li>
                   <a
                     href="/brand"
-                    className="kicker text-ink-gray text-[0.55rem] hover:text-ink-red transition-colors duration-150 focus-visible:outline-ink-red"
+                    className="kicker text-ink text-[0.55rem] hover:text-ink-red transition-colors duration-150 focus-visible:outline-ink-red"
                   >
                     BRAND BOOK
                   </a>
