@@ -1,0 +1,572 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Hey Lola — Logo final</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
+
+<script src="https://unpkg.com/react@18.3.1/umd/react.development.js" integrity="sha384-hD6/rw4ppMLGNu3tX5cjIb+uRZ7UkRJ6BPkLpg4hAu/6onKUg4lLsHAs9EBPT82L" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.development.js" integrity="sha384-u6aeetuaXnQ38mYT8rp6sbXaQe3NL9t+IBXmnYxwkUI2Hw4bsp2Wvmx4yRQF1uAm" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/@babel/standalone@7.29.0/babel.min.js" integrity="sha384-m08KidiNqLdpJqLq95G/LEi8Qvjl/xUYll3QILypMoQ65QorJ9Lvtp2RXYGBFj1y" crossorigin="anonymous"></script>
+
+<style>
+  html, body { margin: 0; padding: 0; background: #f0eee9; }
+  * { box-sizing: border-box; }
+</style>
+</head>
+<body>
+<template id="__bundler_thumbnail" data-bg-color="#f0eee9">
+  <svg viewBox="0 0 1200 800" xmlns="http://www.w3.org/2000/svg">
+    <rect width="1200" height="800" fill="#f0eee9"/>
+    <circle cx="600" cy="400" r="180" fill="#0A0A0A"/>
+    <text x="600" y="455" text-anchor="middle" font-family="Space Grotesk, system-ui, sans-serif" font-weight="700" font-size="170" letter-spacing="-10" fill="#FFFFFF">hl</text>
+  </svg>
+</template>
+<div id="root"></div>
+
+<script type="text/babel" data-presets="react">
+
+// DesignCanvas.jsx — Figma-ish design canvas wrapper
+// Warm gray grid bg + Sections + Artboards + PostIt notes.
+// No assets, no deps.
+
+const DC = {
+  bg: '#f0eee9',
+  grid: 'rgba(0,0,0,0.06)',
+  label: 'rgba(60,50,40,0.7)',
+  title: 'rgba(40,30,20,0.85)',
+  subtitle: 'rgba(60,50,40,0.6)',
+  postitBg: '#fef4a8',
+  postitText: '#5a4a2a',
+  font: '-apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif',
+};
+
+// ─────────────────────────────────────────────────────────────
+// Main canvas — transform-based pan/zoom viewport
+//
+// Input mapping (Figma-style):
+//   • trackpad pinch  → zoom   (ctrlKey wheel; Safari gesture* events)
+//   • trackpad scroll → pan    (two-finger)
+//   • mouse wheel     → zoom   (notched; distinguished from trackpad scroll)
+//   • middle-drag / primary-drag-on-bg → pan
+//
+// Transform state lives in a ref and is written straight to the DOM
+// (translate3d + will-change) so wheel ticks don't go through React —
+// keeps pans at 60fps on dense canvases.
+// ─────────────────────────────────────────────────────────────
+function DesignCanvas({ children, minScale = 0.1, maxScale = 8, style = {} }) {
+  const vpRef = React.useRef(null);
+  const worldRef = React.useRef(null);
+  const tf = React.useRef({ x: 0, y: 0, scale: 1 });
+
+  const apply = React.useCallback(() => {
+    const { x, y, scale } = tf.current;
+    const el = worldRef.current;
+    if (el) el.style.transform = `translate3d(${x}px, ${y}px, 0) scale(${scale})`;
+  }, []);
+
+  React.useEffect(() => {
+    const vp = vpRef.current;
+    if (!vp) return;
+
+    const zoomAt = (cx, cy, factor) => {
+      const r = vp.getBoundingClientRect();
+      const px = cx - r.left, py = cy - r.top;
+      const t = tf.current;
+      const next = Math.min(maxScale, Math.max(minScale, t.scale * factor));
+      const k = next / t.scale;
+      // keep the world point under the cursor fixed
+      t.x = px - (px - t.x) * k;
+      t.y = py - (py - t.y) * k;
+      t.scale = next;
+      apply();
+    };
+
+    // Mouse-wheel vs trackpad-scroll heuristic. A physical wheel sends
+    // line-mode deltas (Firefox) or large integer pixel deltas with no X
+    // component (Chrome/Safari, typically multiples of 100/120). Trackpad
+    // two-finger scroll sends small/fractional pixel deltas, often with
+    // non-zero deltaX. ctrlKey is set by the browser for trackpad pinch.
+    const isMouseWheel = (e) =>
+      e.deltaMode !== 0 ||
+      (e.deltaX === 0 && Number.isInteger(e.deltaY) && Math.abs(e.deltaY) >= 40);
+
+    const onWheel = (e) => {
+      e.preventDefault();
+      if (isGesturing) return; // Safari: gesture* owns the pinch — discard concurrent wheels
+      if (e.ctrlKey) {
+        // trackpad pinch (or explicit ctrl+wheel)
+        zoomAt(e.clientX, e.clientY, Math.exp(-e.deltaY * 0.01));
+      } else if (isMouseWheel(e)) {
+        // notched mouse wheel — fixed-ratio step per click
+        zoomAt(e.clientX, e.clientY, Math.exp(-Math.sign(e.deltaY) * 0.18));
+      } else {
+        // trackpad two-finger scroll — pan
+        tf.current.x -= e.deltaX;
+        tf.current.y -= e.deltaY;
+        apply();
+      }
+    };
+
+    // Safari sends native gesture* events for trackpad pinch with a smooth
+    // e.scale; preferring these over the ctrl+wheel fallback gives a much
+    // better feel there. No-ops on other browsers. Safari also fires
+    // ctrlKey wheel events during the same pinch — isGesturing makes
+    // onWheel drop those entirely so they neither zoom nor pan.
+    let gsBase = 1;
+    let isGesturing = false;
+    const onGestureStart = (e) => { e.preventDefault(); isGesturing = true; gsBase = tf.current.scale; };
+    const onGestureChange = (e) => {
+      e.preventDefault();
+      zoomAt(e.clientX, e.clientY, (gsBase * e.scale) / tf.current.scale);
+    };
+    const onGestureEnd = (e) => { e.preventDefault(); isGesturing = false; };
+
+    // Drag-pan: middle button anywhere, or primary button starting on the
+    // canvas background (not inside an artboard).
+    let drag = null;
+    const onPointerDown = (e) => {
+      const onBg = e.target === vp || e.target === worldRef.current;
+      if (!(e.button === 1 || (e.button === 0 && onBg))) return;
+      e.preventDefault();
+      vp.setPointerCapture(e.pointerId);
+      drag = { id: e.pointerId, lx: e.clientX, ly: e.clientY };
+      vp.style.cursor = 'grabbing';
+    };
+    const onPointerMove = (e) => {
+      if (!drag || e.pointerId !== drag.id) return;
+      tf.current.x += e.clientX - drag.lx;
+      tf.current.y += e.clientY - drag.ly;
+      drag.lx = e.clientX; drag.ly = e.clientY;
+      apply();
+    };
+    const onPointerUp = (e) => {
+      if (!drag || e.pointerId !== drag.id) return;
+      vp.releasePointerCapture(e.pointerId);
+      drag = null;
+      vp.style.cursor = '';
+    };
+
+    vp.addEventListener('wheel', onWheel, { passive: false });
+    vp.addEventListener('gesturestart', onGestureStart, { passive: false });
+    vp.addEventListener('gesturechange', onGestureChange, { passive: false });
+    vp.addEventListener('gestureend', onGestureEnd, { passive: false });
+    vp.addEventListener('pointerdown', onPointerDown);
+    vp.addEventListener('pointermove', onPointerMove);
+    vp.addEventListener('pointerup', onPointerUp);
+    vp.addEventListener('pointercancel', onPointerUp);
+    return () => {
+      vp.removeEventListener('wheel', onWheel);
+      vp.removeEventListener('gesturestart', onGestureStart);
+      vp.removeEventListener('gesturechange', onGestureChange);
+      vp.removeEventListener('gestureend', onGestureEnd);
+      vp.removeEventListener('pointerdown', onPointerDown);
+      vp.removeEventListener('pointermove', onPointerMove);
+      vp.removeEventListener('pointerup', onPointerUp);
+      vp.removeEventListener('pointercancel', onPointerUp);
+    };
+  }, [apply, minScale, maxScale]);
+
+  const gridSvg = `url("data:image/svg+xml,%3Csvg width='120' height='120' xmlns='http://www.w3.org/2000/svg'%3E%3Cpath d='M120 0H0v120' fill='none' stroke='${encodeURIComponent(DC.grid)}' stroke-width='1'/%3E%3C/svg%3E")`;
+  return (
+    <div
+      ref={vpRef}
+      className="design-canvas"
+      style={{
+        height: '100vh', width: '100vw',
+        background: DC.bg,
+        overflow: 'hidden',
+        overscrollBehavior: 'none',
+        touchAction: 'none',
+        position: 'relative',
+        fontFamily: DC.font,
+        boxSizing: 'border-box',
+        ...style,
+      }}
+    >
+      <div
+        ref={worldRef}
+        style={{
+          position: 'absolute', top: 0, left: 0,
+          transformOrigin: '0 0',
+          willChange: 'transform',
+          width: 'max-content', minWidth: '100%',
+          minHeight: '100%',
+          padding: '60px 0 80px',
+          backgroundImage: gridSvg,
+          backgroundSize: '120px 120px',
+        }}
+      >
+        {children}
+      </div>
+    </div>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────
+// Section — title + subtitle + h-stack of artboards (no wrap)
+// ─────────────────────────────────────────────────────────────
+function DCSection({ title, subtitle, children, gap = 48 }) {
+  return (
+    <div style={{ marginBottom: 80, position: 'relative' }}>
+      <div style={{ padding: '0 60px 36px' }}>
+        <div style={{
+          fontSize: 22, fontWeight: 600, color: DC.title,
+          letterSpacing: -0.3, marginBottom: 4,
+        }}>{title}</div>
+        {subtitle && (
+          <div style={{
+            fontSize: 14, fontWeight: 400, color: DC.subtitle,
+          }}>{subtitle}</div>
+        )}
+      </div>
+      {/* h-stack — clips offscreen, never wraps */}
+      <div style={{
+        display: 'flex', gap, padding: '0 60px',
+        alignItems: 'flex-start', width: 'max-content',
+      }}>
+        {children}
+      </div>
+    </div>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────
+// Artboard — labeled card
+// ─────────────────────────────────────────────────────────────
+function DCArtboard({ label, children, width, height, style = {} }) {
+  return (
+    <div style={{ position: 'relative', flexShrink: 0 }}>
+      {label && (
+        <div style={{
+          position: 'absolute', bottom: '100%', left: 0,
+          paddingBottom: 8,
+          fontSize: 12, fontWeight: 500, color: DC.label,
+          whiteSpace: 'nowrap',
+        }}>{label}</div>
+      )}
+      <div style={{
+        borderRadius: 2,
+        boxShadow: '0 1px 3px rgba(0,0,0,0.08), 0 4px 16px rgba(0,0,0,0.06)',
+        overflow: 'hidden',
+        width, height,
+        background: '#fff',
+        ...style,
+      }}>
+        {children}
+      </div>
+    </div>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────
+// Post-it — absolute-positioned sticky note
+// ─────────────────────────────────────────────────────────────
+function DCPostIt({ children, top, left, right, bottom, rotate = -2, width = 180 }) {
+  return (
+    <div style={{
+      position: 'absolute', top, left, right, bottom, width,
+      background: DC.postitBg, padding: '14px 16px',
+      fontFamily: '"Comic Sans MS", "Marker Felt", "Segoe Print", cursive',
+      fontSize: 14, lineHeight: 1.4, color: DC.postitText,
+      boxShadow: '0 2px 8px rgba(0,0,0,0.12), 0 1px 2px rgba(0,0,0,0.08)',
+      transform: `rotate(${rotate}deg)`,
+      zIndex: 5,
+    }}>{children}</div>
+  );
+}
+
+Object.assign(window, { DesignCanvas, DCSection, DCArtboard, DCPostIt });
+
+
+
+// Hey Lola — Final mark sheet
+// Wordmark: "hey lola." (con punto) + Monograma hl en círculo. B&N.
+
+const INK = '#0A0A0A';
+const PAPER = '#FFFFFF';
+const LOLA_FONT = '"Space Grotesk", system-ui, sans-serif';
+const BODY_FONT = '"Inter", system-ui, sans-serif';
+const MONO_FONT = '"JetBrains Mono", ui-monospace, monospace';
+
+function Wordmark({ ink = INK, size = 72 }) {
+  return (
+    <div style={{
+      fontFamily: LOLA_FONT, fontWeight: 700, fontSize: size,
+      letterSpacing: '-0.04em', color: ink, lineHeight: 1,
+      display: 'inline-flex', alignItems: 'baseline', whiteSpace: 'nowrap',
+    }}>
+      hey lola<span style={{ marginLeft: size * 0.02 }}>.</span>
+    </div>
+  );
+}
+
+function Monogram({ ink = INK, paper = PAPER, size = 120 }) {
+  return (
+    <div style={{
+      width: size, height: size, borderRadius: '50%',
+      background: ink, color: paper,
+      display: 'flex', alignItems: 'center', justifyContent: 'center',
+      fontFamily: LOLA_FONT, fontWeight: 700, fontSize: size * 0.48,
+      letterSpacing: '-0.06em',
+    }}>hl</div>
+  );
+}
+
+function MonogramOutline({ ink = PAPER, size = 120 }) {
+  return (
+    <div style={{
+      width: size, height: size, borderRadius: '50%',
+      border: `${Math.max(2, size * 0.018)}px solid ${ink}`, color: ink,
+      display: 'flex', alignItems: 'center', justifyContent: 'center',
+      fontFamily: LOLA_FONT, fontWeight: 700, fontSize: size * 0.48,
+      letterSpacing: '-0.06em',
+    }}>hl</div>
+  );
+}
+
+function Lockup({ ink = INK, paper = PAPER, size = 48 }) {
+  return (
+    <div style={{ display: 'flex', alignItems: 'center', gap: size * 0.32 }}>
+      <Monogram ink={ink} paper={paper} size={size} />
+      <Wordmark ink={ink} size={size * 0.72} />
+    </div>
+  );
+}
+
+function Board({ label, variant, children, width = 520, height = 340, bg = PAPER, pad = 0 }) {
+  return (
+    <DCArtboard label={null} width={width} height={height + 80} style={{ background: 'transparent', boxShadow: 'none' }}>
+      <div style={{
+        width, height, background: bg,
+        display: 'flex', alignItems: 'center', justifyContent: 'center',
+        boxShadow: '0 1px 3px rgba(0,0,0,0.08), 0 4px 20px rgba(0,0,0,0.04)',
+        padding: pad,
+      }}>{children}</div>
+      <div style={{ padding: '14px 2px 0' }}>
+        <div style={{
+          fontFamily: MONO_FONT, fontSize: 10, fontWeight: 500,
+          letterSpacing: '0.18em', textTransform: 'uppercase',
+          color: 'rgba(10,10,10,0.45)',
+        }}>{variant}</div>
+        <div style={{
+          fontFamily: BODY_FONT, fontSize: 14, fontWeight: 500,
+          color: 'rgba(10,10,10,0.85)', marginTop: 2,
+        }}>{label}</div>
+      </div>
+    </DCArtboard>
+  );
+}
+
+function Header() {
+  return (
+    <div style={{ padding: '0 60px 50px', maxWidth: 1200 }}>
+      <div style={{
+        fontFamily: MONO_FONT, fontSize: 11, fontWeight: 500,
+        letterSpacing: '0.22em', textTransform: 'uppercase',
+        color: 'rgba(10,10,10,0.5)', marginBottom: 14,
+      }}>
+        Hey Lola · Logo final · v2
+      </div>
+      <Wordmark size={96} />
+      <div style={{
+        fontFamily: BODY_FONT, fontSize: 17, fontWeight: 400,
+        color: 'rgba(10,10,10,0.7)', lineHeight: 1.5, maxWidth: 640,
+        marginTop: 24,
+      }}>
+        Wordmark con punto + monograma circular. Blanco y negro.
+        Space Grotesk Bold, tracking −4%. El punto es la firma: "eso es todo."
+      </div>
+    </div>
+  );
+}
+
+function App() {
+  return (
+    <DesignCanvas>
+      <Header />
+
+      <DCSection title="01 · La marca" subtitle="Wordmark principal. Hero, decks, email.">
+        <Board variant="primary" label="hey lola. · sobre paper" width={720} height={380}>
+          <Wordmark size={88} />
+        </Board>
+        <Board variant="inverted" label="hey lola. · sobre ink" width={720} height={380} bg={INK}>
+          <Wordmark ink={PAPER} size={88} />
+        </Board>
+      </DCSection>
+
+      <DCSection title="02 · Monograma" subtitle="App icon, favicon, avatar.">
+        <Board variant="monogram" label="hl · ink" width={400} height={380}>
+          <Monogram size={200} />
+        </Board>
+        <Board variant="monogram · outline" label="hl · outline sobre ink" width={400} height={380} bg={INK}>
+          <MonogramOutline size={200} />
+        </Board>
+        <Board variant="monogram · inv" label="hl · paper sobre ink" width={400} height={380} bg={INK}>
+          <Monogram ink={PAPER} paper={INK} size={200} />
+        </Board>
+      </DCSection>
+
+      <DCSection title="03 · Lockup" subtitle="Monograma + wordmark juntos — navbar, firmas.">
+        <Board variant="lockup" label="horizontal · nav" width={620} height={200}>
+          <Lockup size={56} />
+        </Board>
+        <Board variant="lockup · inv" label="horizontal · sobre ink" width={620} height={200} bg={INK}>
+          <Lockup ink={PAPER} paper={INK} size={56} />
+        </Board>
+      </DCSection>
+
+      <DCSection title="04 · Espacio libre" subtitle="Deja al menos la altura del monograma (x) alrededor.">
+        <Board variant="clear space" label="x = altura del monograma" width={900} height={440}>
+          <div style={{ position: 'relative', padding: 80 }}>
+            <div style={{ position: 'absolute', top: 0, left: 80, right: 80, borderTop: '1px dashed rgba(10,10,10,0.25)' }} />
+            <div style={{ position: 'absolute', bottom: 0, left: 80, right: 80, borderTop: '1px dashed rgba(10,10,10,0.25)' }} />
+            <div style={{ position: 'absolute', left: 0, top: 80, bottom: 80, borderLeft: '1px dashed rgba(10,10,10,0.25)' }} />
+            <div style={{ position: 'absolute', right: 0, top: 80, bottom: 80, borderLeft: '1px dashed rgba(10,10,10,0.25)' }} />
+            <div style={{
+              position: 'absolute', top: 30, left: 80,
+              fontFamily: MONO_FONT, fontSize: 10, fontWeight: 500,
+              letterSpacing: '0.18em', textTransform: 'uppercase',
+              color: 'rgba(10,10,10,0.4)',
+            }}>x</div>
+            <Lockup size={72} />
+          </div>
+        </Board>
+      </DCSection>
+
+      <DCSection title="05 · Escala" subtitle="Así se ve en producto, a todos los tamaños.">
+        <DCArtboard label={null} width={1180} height={320} style={{ background: PAPER }}>
+          <div style={{ padding: '50px', display: 'flex', alignItems: 'baseline', gap: 72, height: '100%' }}>
+            {[
+              { size: 14, label: '14px · footer' },
+              { size: 20, label: '20px · nav' },
+              { size: 32, label: '32px · card' },
+              { size: 56, label: '56px · hero' },
+              { size: 96, label: '96px · display' },
+            ].map(({ size, label }) => (
+              <div key={size} style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-start', gap: 14 }}>
+                <Wordmark size={size} />
+                <div style={{
+                  fontFamily: MONO_FONT, fontSize: 10, fontWeight: 500,
+                  letterSpacing: '0.15em', textTransform: 'uppercase',
+                  color: 'rgba(10,10,10,0.4)',
+                }}>{label}</div>
+              </div>
+            ))}
+          </div>
+        </DCArtboard>
+      </DCSection>
+
+      <DCSection title="06 · App icon" subtitle="Monograma a 16 / 24 / 48 / 128 / 256px.">
+        <DCArtboard label={null} width={820} height={340} style={{ background: PAPER }}>
+          <div style={{ padding: '40px 50px', display: 'flex', alignItems: 'flex-end', gap: 48, height: '100%' }}>
+            {[16, 24, 48, 128, 256].map(size => (
+              <div key={size} style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 14 }}>
+                <Monogram size={size} />
+                <div style={{
+                  fontFamily: MONO_FONT, fontSize: 10, fontWeight: 500,
+                  letterSpacing: '0.15em', textTransform: 'uppercase',
+                  color: 'rgba(10,10,10,0.4)',
+                }}>{size}</div>
+              </div>
+            ))}
+          </div>
+        </DCArtboard>
+      </DCSection>
+
+      <DCSection title="07 · En contexto" subtitle="Navbar, avatar social, tarjeta.">
+        <Board variant="nav bar" label="header del sitio" width={900} height={200} bg={PAPER} pad={0}>
+          <div style={{
+            width: '100%', height: 72, borderBottom: '1px solid #E5E5E5',
+            display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+            padding: '0 40px', background: PAPER,
+          }}>
+            <Lockup size={36} />
+            <div style={{ display: 'flex', gap: 28, alignItems: 'center' }}>
+              {['How it works', 'For clinics', 'Investors'].map(l => (
+                <div key={l} style={{
+                  fontFamily: BODY_FONT, fontSize: 14, fontWeight: 500,
+                  color: 'rgba(10,10,10,0.75)',
+                }}>{l}</div>
+              ))}
+              <div style={{
+                fontFamily: BODY_FONT, fontSize: 13, fontWeight: 600,
+                background: INK, color: PAPER, padding: '10px 16px',
+                borderRadius: 999,
+              }}>Join waitlist</div>
+            </div>
+          </div>
+        </Board>
+
+        <Board variant="avatar" label="redes sociales · 160×160" width={360} height={380}>
+          <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 18 }}>
+            <Monogram size={160} />
+            <div style={{ fontFamily: BODY_FONT, fontSize: 14, fontWeight: 600, color: 'rgba(10,10,10,0.85)' }}>@heylola</div>
+            <div style={{ fontFamily: BODY_FONT, fontSize: 13, fontWeight: 400, color: 'rgba(10,10,10,0.55)' }}>Travel with your pet, stress-free.</div>
+          </div>
+        </Board>
+
+        <Board variant="business card" label="85×55mm" width={440} height={380} bg="#f0eee9" pad={40}>
+          <div style={{
+            width: 340, height: 220, background: PAPER,
+            boxShadow: '0 10px 30px rgba(0,0,0,0.08), 0 2px 6px rgba(0,0,0,0.06)',
+            padding: 24, display: 'flex', flexDirection: 'column', justifyContent: 'space-between',
+          }}>
+            <Monogram size={44} />
+            <div>
+              <div style={{ fontFamily: LOLA_FONT, fontWeight: 700, fontSize: 18, letterSpacing: '-0.03em', color: INK, lineHeight: 1 }}>Camila Núñez</div>
+              <div style={{ fontFamily: BODY_FONT, fontSize: 12, fontWeight: 400, color: 'rgba(10,10,10,0.6)', marginTop: 4 }}>Founder · camila@heylola.app</div>
+              <div style={{ fontFamily: MONO_FONT, fontSize: 10, fontWeight: 500, letterSpacing: '0.18em', textTransform: 'uppercase', color: 'rgba(10,10,10,0.4)', marginTop: 12 }}>heylola.app</div>
+            </div>
+          </div>
+        </Board>
+      </DCSection>
+
+      <DCSection title="08 · Nunca" subtitle="Ink y paper cargan 90% del interfaz.">
+        <Board variant="don't · 01" label="No estirar" width={360} height={220}>
+          <div style={{ fontFamily: LOLA_FONT, fontWeight: 700, fontSize: 56, letterSpacing: '-0.04em', color: INK, lineHeight: 1, transform: 'scaleX(1.6)' }}>hey lola.</div>
+        </Board>
+        <Board variant="don't · 02" label="No outline" width={360} height={220}>
+          <div style={{ fontFamily: LOLA_FONT, fontWeight: 700, fontSize: 72, letterSpacing: '-0.04em', color: 'transparent', lineHeight: 1, WebkitTextStroke: `2px ${INK}` }}>hey lola.</div>
+        </Board>
+        <Board variant="don't · 03" label="No shadow" width={360} height={220}>
+          <div style={{ fontFamily: LOLA_FONT, fontWeight: 700, fontSize: 72, letterSpacing: '-0.04em', color: INK, lineHeight: 1, textShadow: '4px 4px 0 rgba(10,10,10,0.25)' }}>hey lola.</div>
+        </Board>
+        <Board variant="don't · 04" label="No recolorear" width={360} height={220}>
+          <div style={{ fontFamily: LOLA_FONT, fontWeight: 700, fontSize: 72, letterSpacing: '-0.04em', color: '#F5A524', lineHeight: 1 }}>hey lola.</div>
+        </Board>
+      </DCSection>
+
+      <div style={{ padding: '0 60px 120px', maxWidth: 900 }}>
+        <div style={{
+          fontFamily: MONO_FONT, fontSize: 11, fontWeight: 500,
+          letterSpacing: '0.22em', textTransform: 'uppercase',
+          color: 'rgba(10,10,10,0.5)', marginBottom: 14,
+        }}>Siguiente</div>
+        <div style={{
+          fontFamily: LOLA_FONT, fontSize: 32, fontWeight: 700,
+          letterSpacing: '-0.03em', color: INK, lineHeight: 1.1,
+          marginBottom: 18,
+        }}>¿Exportamos?</div>
+        <ul style={{
+          fontFamily: BODY_FONT, fontSize: 16, color: 'rgba(10,10,10,0.75)',
+          lineHeight: 1.6, paddingLeft: 20,
+        }}>
+          <li>Puedo exportar SVG limpios (wordmark, monograma, lockup).</li>
+          <li>Y PNG en tamaños estándar (16, 32, 48, 128, 256, 512, 1024).</li>
+          <li>Si quieres ajustar tamaño o separación del punto, dime.</li>
+        </ul>
+      </div>
+    </DesignCanvas>
+  );
+}
+
+const root = ReactDOM.createRoot(document.getElementById('root'));
+root.render(<App />);
+
+</script>
+</body>
+</html>

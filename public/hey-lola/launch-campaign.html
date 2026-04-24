@@ -1,0 +1,1114 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Hey Lola — Launch Campaign</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
+
+<script src="https://unpkg.com/react@18.3.1/umd/react.development.js" integrity="sha384-hD6/rw4ppMLGNu3tX5cjIb+uRZ7UkRJ6BPkLpg4hAu/6onKUg4lLsHAs9EBPT82L" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.development.js" integrity="sha384-u6aeetuaXnQ38mYT8rp6sbXaQe3NL9t+IBXmnYxwkUI2Hw4bsp2Wvmx4yRQF1uAm" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/@babel/standalone@7.29.0/babel.min.js" integrity="sha384-m08KidiNqLdpJqLq95G/LEi8Qvjl/xUYll3QILypMoQ65QorJ9Lvtp2RXYGBFj1y" crossorigin="anonymous"></script>
+
+<style>
+  html, body { margin: 0; padding: 0; background: #f0eee9; }
+  * { box-sizing: border-box; }
+</style>
+</head>
+<body>
+<div id="root"></div>
+
+<script type="text/babel" data-presets="react">
+
+// DesignCanvas.jsx — Figma-ish design canvas wrapper
+// Warm gray grid bg + Sections + Artboards + PostIt notes.
+// No assets, no deps.
+
+const DC = {
+  bg: '#f0eee9',
+  grid: 'rgba(0,0,0,0.06)',
+  label: 'rgba(60,50,40,0.7)',
+  title: 'rgba(40,30,20,0.85)',
+  subtitle: 'rgba(60,50,40,0.6)',
+  postitBg: '#fef4a8',
+  postitText: '#5a4a2a',
+  font: '-apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif',
+};
+
+// ─────────────────────────────────────────────────────────────
+// Main canvas — transform-based pan/zoom viewport
+//
+// Input mapping (Figma-style):
+//   • trackpad pinch  → zoom   (ctrlKey wheel; Safari gesture* events)
+//   • trackpad scroll → pan    (two-finger)
+//   • mouse wheel     → zoom   (notched; distinguished from trackpad scroll)
+//   • middle-drag / primary-drag-on-bg → pan
+//
+// Transform state lives in a ref and is written straight to the DOM
+// (translate3d + will-change) so wheel ticks don't go through React —
+// keeps pans at 60fps on dense canvases.
+// ─────────────────────────────────────────────────────────────
+function DesignCanvas({ children, minScale = 0.1, maxScale = 8, style = {} }) {
+  const vpRef = React.useRef(null);
+  const worldRef = React.useRef(null);
+  const tf = React.useRef({ x: 0, y: 0, scale: 1 });
+
+  const apply = React.useCallback(() => {
+    const { x, y, scale } = tf.current;
+    const el = worldRef.current;
+    if (el) el.style.transform = `translate3d(${x}px, ${y}px, 0) scale(${scale})`;
+  }, []);
+
+  React.useEffect(() => {
+    const vp = vpRef.current;
+    if (!vp) return;
+
+    const zoomAt = (cx, cy, factor) => {
+      const r = vp.getBoundingClientRect();
+      const px = cx - r.left, py = cy - r.top;
+      const t = tf.current;
+      const next = Math.min(maxScale, Math.max(minScale, t.scale * factor));
+      const k = next / t.scale;
+      // keep the world point under the cursor fixed
+      t.x = px - (px - t.x) * k;
+      t.y = py - (py - t.y) * k;
+      t.scale = next;
+      apply();
+    };
+
+    // Mouse-wheel vs trackpad-scroll heuristic. A physical wheel sends
+    // line-mode deltas (Firefox) or large integer pixel deltas with no X
+    // component (Chrome/Safari, typically multiples of 100/120). Trackpad
+    // two-finger scroll sends small/fractional pixel deltas, often with
+    // non-zero deltaX. ctrlKey is set by the browser for trackpad pinch.
+    const isMouseWheel = (e) =>
+      e.deltaMode !== 0 ||
+      (e.deltaX === 0 && Number.isInteger(e.deltaY) && Math.abs(e.deltaY) >= 40);
+
+    const onWheel = (e) => {
+      e.preventDefault();
+      if (isGesturing) return; // Safari: gesture* owns the pinch — discard concurrent wheels
+      if (e.ctrlKey) {
+        // trackpad pinch (or explicit ctrl+wheel)
+        zoomAt(e.clientX, e.clientY, Math.exp(-e.deltaY * 0.01));
+      } else if (isMouseWheel(e)) {
+        // notched mouse wheel — fixed-ratio step per click
+        zoomAt(e.clientX, e.clientY, Math.exp(-Math.sign(e.deltaY) * 0.18));
+      } else {
+        // trackpad two-finger scroll — pan
+        tf.current.x -= e.deltaX;
+        tf.current.y -= e.deltaY;
+        apply();
+      }
+    };
+
+    // Safari sends native gesture* events for trackpad pinch with a smooth
+    // e.scale; preferring these over the ctrl+wheel fallback gives a much
+    // better feel there. No-ops on other browsers. Safari also fires
+    // ctrlKey wheel events during the same pinch — isGesturing makes
+    // onWheel drop those entirely so they neither zoom nor pan.
+    let gsBase = 1;
+    let isGesturing = false;
+    const onGestureStart = (e) => { e.preventDefault(); isGesturing = true; gsBase = tf.current.scale; };
+    const onGestureChange = (e) => {
+      e.preventDefault();
+      zoomAt(e.clientX, e.clientY, (gsBase * e.scale) / tf.current.scale);
+    };
+    const onGestureEnd = (e) => { e.preventDefault(); isGesturing = false; };
+
+    // Drag-pan: middle button anywhere, or primary button starting on the
+    // canvas background (not inside an artboard).
+    let drag = null;
+    const onPointerDown = (e) => {
+      const onBg = e.target === vp || e.target === worldRef.current;
+      if (!(e.button === 1 || (e.button === 0 && onBg))) return;
+      e.preventDefault();
+      vp.setPointerCapture(e.pointerId);
+      drag = { id: e.pointerId, lx: e.clientX, ly: e.clientY };
+      vp.style.cursor = 'grabbing';
+    };
+    const onPointerMove = (e) => {
+      if (!drag || e.pointerId !== drag.id) return;
+      tf.current.x += e.clientX - drag.lx;
+      tf.current.y += e.clientY - drag.ly;
+      drag.lx = e.clientX; drag.ly = e.clientY;
+      apply();
+    };
+    const onPointerUp = (e) => {
+      if (!drag || e.pointerId !== drag.id) return;
+      vp.releasePointerCapture(e.pointerId);
+      drag = null;
+      vp.style.cursor = '';
+    };
+
+    vp.addEventListener('wheel', onWheel, { passive: false });
+    vp.addEventListener('gesturestart', onGestureStart, { passive: false });
+    vp.addEventListener('gesturechange', onGestureChange, { passive: false });
+    vp.addEventListener('gestureend', onGestureEnd, { passive: false });
+    vp.addEventListener('pointerdown', onPointerDown);
+    vp.addEventListener('pointermove', onPointerMove);
+    vp.addEventListener('pointerup', onPointerUp);
+    vp.addEventListener('pointercancel', onPointerUp);
+    return () => {
+      vp.removeEventListener('wheel', onWheel);
+      vp.removeEventListener('gesturestart', onGestureStart);
+      vp.removeEventListener('gesturechange', onGestureChange);
+      vp.removeEventListener('gestureend', onGestureEnd);
+      vp.removeEventListener('pointerdown', onPointerDown);
+      vp.removeEventListener('pointermove', onPointerMove);
+      vp.removeEventListener('pointerup', onPointerUp);
+      vp.removeEventListener('pointercancel', onPointerUp);
+    };
+  }, [apply, minScale, maxScale]);
+
+  const gridSvg = `url("data:image/svg+xml,%3Csvg width='120' height='120' xmlns='http://www.w3.org/2000/svg'%3E%3Cpath d='M120 0H0v120' fill='none' stroke='${encodeURIComponent(DC.grid)}' stroke-width='1'/%3E%3C/svg%3E")`;
+  return (
+    <div
+      ref={vpRef}
+      className="design-canvas"
+      style={{
+        height: '100vh', width: '100vw',
+        background: DC.bg,
+        overflow: 'hidden',
+        overscrollBehavior: 'none',
+        touchAction: 'none',
+        position: 'relative',
+        fontFamily: DC.font,
+        boxSizing: 'border-box',
+        ...style,
+      }}
+    >
+      <div
+        ref={worldRef}
+        style={{
+          position: 'absolute', top: 0, left: 0,
+          transformOrigin: '0 0',
+          willChange: 'transform',
+          width: 'max-content', minWidth: '100%',
+          minHeight: '100%',
+          padding: '60px 0 80px',
+          backgroundImage: gridSvg,
+          backgroundSize: '120px 120px',
+        }}
+      >
+        {children}
+      </div>
+    </div>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────
+// Section — title + subtitle + h-stack of artboards (no wrap)
+// ─────────────────────────────────────────────────────────────
+function DCSection({ title, subtitle, children, gap = 48 }) {
+  return (
+    <div style={{ marginBottom: 80, position: 'relative' }}>
+      <div style={{ padding: '0 60px 36px' }}>
+        <div style={{
+          fontSize: 22, fontWeight: 600, color: DC.title,
+          letterSpacing: -0.3, marginBottom: 4,
+        }}>{title}</div>
+        {subtitle && (
+          <div style={{
+            fontSize: 14, fontWeight: 400, color: DC.subtitle,
+          }}>{subtitle}</div>
+        )}
+      </div>
+      {/* h-stack — clips offscreen, never wraps */}
+      <div style={{
+        display: 'flex', gap, padding: '0 60px',
+        alignItems: 'flex-start', width: 'max-content',
+      }}>
+        {children}
+      </div>
+    </div>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────
+// Artboard — labeled card
+// ─────────────────────────────────────────────────────────────
+function DCArtboard({ label, children, width, height, style = {} }) {
+  return (
+    <div style={{ position: 'relative', flexShrink: 0 }}>
+      {label && (
+        <div style={{
+          position: 'absolute', bottom: '100%', left: 0,
+          paddingBottom: 8,
+          fontSize: 12, fontWeight: 500, color: DC.label,
+          whiteSpace: 'nowrap',
+        }}>{label}</div>
+      )}
+      <div style={{
+        borderRadius: 2,
+        boxShadow: '0 1px 3px rgba(0,0,0,0.08), 0 4px 16px rgba(0,0,0,0.06)',
+        overflow: 'hidden',
+        width, height,
+        background: '#fff',
+        ...style,
+      }}>
+        {children}
+      </div>
+    </div>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────
+// Post-it — absolute-positioned sticky note
+// ─────────────────────────────────────────────────────────────
+function DCPostIt({ children, top, left, right, bottom, rotate = -2, width = 180 }) {
+  return (
+    <div style={{
+      position: 'absolute', top, left, right, bottom, width,
+      background: DC.postitBg, padding: '14px 16px',
+      fontFamily: '"Comic Sans MS", "Marker Felt", "Segoe Print", cursive',
+      fontSize: 14, lineHeight: 1.4, color: DC.postitText,
+      boxShadow: '0 2px 8px rgba(0,0,0,0.12), 0 1px 2px rgba(0,0,0,0.08)',
+      transform: `rotate(${rotate}deg)`,
+      zIndex: 5,
+    }}>{children}</div>
+  );
+}
+
+Object.assign(window, { DesignCanvas, DCSection, DCArtboard, DCPostIt });
+
+
+
+// Hey Lola — Campaign shared tokens + primitives
+// Brand: Space Grotesk 700 -4%, Inter body, JetBrains Mono caption, B&W.
+
+const CK = {
+  ink: '#0A0A0A',
+  paper: '#FFFFFF',
+  cream: '#F4F1EA',
+  warm: '#EDE8DE',
+  rule: 'rgba(10,10,10,0.12)',
+  muted: 'rgba(10,10,10,0.55)',
+  fontDisplay: '"Space Grotesk", system-ui, sans-serif',
+  fontBody: '"Inter", system-ui, sans-serif',
+  fontMono: '"JetBrains Mono", ui-monospace, monospace',
+};
+
+// Tiny wordmark used across the campaign
+function Wordmark({ size = 20, ink = CK.ink }) {
+  return (
+    <span style={{
+      fontFamily: CK.fontDisplay, fontWeight: 700, fontSize: size,
+      letterSpacing: '-0.04em', color: ink, lineHeight: 1,
+      whiteSpace: 'nowrap',
+    }}>hey lola.</span>
+  );
+}
+
+// Circle 'hl' monogram
+function Monogram({ size = 48, ink = CK.ink, paper = CK.paper }) {
+  return (
+    <div style={{
+      width: size, height: size, borderRadius: '50%',
+      background: ink, color: paper, flexShrink: 0,
+      display: 'flex', alignItems: 'center', justifyContent: 'center',
+      fontFamily: CK.fontDisplay, fontWeight: 700, fontSize: size * 0.48,
+      letterSpacing: '-0.06em',
+    }}>hl</div>
+  );
+}
+
+// Mono tag used all over ("✈ heylola.co · est. 2026")
+function Eyebrow({ children, ink = CK.ink, size = 11 }) {
+  return (
+    <div style={{
+      fontFamily: CK.fontMono, fontSize: size, fontWeight: 500,
+      letterSpacing: '0.22em', textTransform: 'uppercase',
+      color: ink, opacity: 0.75,
+    }}>{children}</div>
+  );
+}
+
+// Dashed ticket-edge divider (travel motif, very subtle)
+function TicketRule({ color = CK.ink, opacity = 0.2 }) {
+  return (
+    <div style={{
+      height: 1, width: '100%',
+      backgroundImage: `repeating-linear-gradient(90deg, ${color} 0 6px, transparent 6px 12px)`,
+      opacity,
+    }} />
+  );
+}
+
+// Photo placeholder — an editorial frame where real dog photography goes.
+// Soft-cream fill, hairline border, crosshair + mono caption.
+// Replace with an <img> when photography is ready.
+function DogGlyph({ size = 120, ink = CK.ink, label = 'photo · coming' }) {
+  const w = size;
+  const h = size * 0.8;
+  return (
+    <div style={{
+      width: w, height: h, position: 'relative',
+      background: ink === CK.paper ? 'rgba(255,255,255,0.08)' : CK.cream,
+      border: `1px solid ${ink === CK.paper ? 'rgba(255,255,255,0.25)' : 'rgba(10,10,10,0.18)'}`,
+      display: 'flex', alignItems: 'center', justifyContent: 'center',
+      fontFamily: CK.fontMono, color: ink, overflow: 'hidden',
+    }}>
+      {/* diagonal crosshair */}
+      <svg viewBox={`0 0 ${w} ${h}`} width={w} height={h} style={{ position: 'absolute', inset: 0 }}>
+        <line x1="0" y1="0" x2={w} y2={h} stroke={ink} strokeOpacity="0.18" strokeWidth="1" />
+        <line x1={w} y1="0" x2="0" y2={h} stroke={ink} strokeOpacity="0.18" strokeWidth="1" />
+      </svg>
+      <div style={{
+        position: 'relative', fontSize: Math.max(10, size * 0.028),
+        letterSpacing: '0.22em', textTransform: 'uppercase',
+        padding: '6px 12px', background: ink === CK.paper ? CK.ink : CK.paper,
+        opacity: 0.9,
+      }}>{label}</div>
+    </div>
+  );
+}
+
+// Phone frame for screenshots — minimal rounded rect with notch
+function PhoneFrame({ children, width = 320, height = 680, ink = CK.ink }) {
+  return (
+    <div style={{
+      width, height, borderRadius: 44,
+      background: ink, padding: 10, position: 'relative',
+      boxShadow: '0 20px 60px rgba(0,0,0,0.18), 0 4px 12px rgba(0,0,0,0.08)',
+    }}>
+      <div style={{
+        width: '100%', height: '100%', borderRadius: 34,
+        background: CK.paper, overflow: 'hidden', position: 'relative',
+      }}>
+        {/* notch */}
+        <div style={{
+          position: 'absolute', top: 8, left: '50%', transform: 'translateX(-50%)',
+          width: 100, height: 28, borderRadius: 14, background: ink, zIndex: 10,
+        }} />
+        {children}
+      </div>
+    </div>
+  );
+}
+
+Object.assign(window, { CK, Wordmark, Monogram, Eyebrow, TicketRule, DogGlyph, PhoneFrame });
+
+
+// Instagram 1:1 posts — 6 variations
+// 1080×1080 canvas (rendered at 540 in the index; scales cleanly)
+// All B&W, all different compositional approaches.
+
+const IG_SIZE = 1080;
+
+function IGFrame({ children, bg = CK.paper, label }) {
+  // Renders at full 1080 for pixel fidelity; parent scales via transform.
+  return (
+    <div data-ig-post style={{
+      width: IG_SIZE, height: IG_SIZE, background: bg,
+      position: 'relative', overflow: 'hidden',
+      fontFamily: CK.fontBody, color: CK.ink,
+    }}>
+      {children}
+    </div>
+  );
+}
+
+// 01 — Manifesto / big type
+// Full bleed headline. No image. Classic Hey Lola move.
+function IG01() {
+  return (
+    <IGFrame>
+      <div style={{ padding: 80, height: '100%', display: 'flex', flexDirection: 'column', justifyContent: 'space-between' }}>
+        <Eyebrow>✈ heylola.co · launching soon</Eyebrow>
+        <div style={{
+          fontFamily: CK.fontDisplay, fontWeight: 700, fontSize: 120,
+          letterSpacing: '-0.05em', lineHeight: 0.95,
+        }}>
+          from<br/>dog lovers<br/>to dog<br/>lovers.
+        </div>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-end' }}>
+          <Wordmark size={28} />
+          <Eyebrow>join us →</Eyebrow>
+        </div>
+      </div>
+    </IGFrame>
+  );
+}
+
+// 02 — Ticket stub composition
+// Dashed divider + mono caption feels like a luggage tag.
+function IG02() {
+  return (
+    <IGFrame bg={CK.cream}>
+      <div style={{ padding: 80, height: '100%', display: 'flex', flexDirection: 'column' }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+          <Wordmark size={32} />
+          <Eyebrow>boarding · 2026</Eyebrow>
+        </div>
+        <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+          <div style={{ textAlign: 'center' }}>
+            <Eyebrow size={13}>now boarding</Eyebrow>
+            <div style={{
+              fontFamily: CK.fontDisplay, fontWeight: 700, fontSize: 160,
+              letterSpacing: '-0.05em', lineHeight: 0.95, margin: '24px 0',
+            }}>
+              the<br/>ecosystem
+            </div>
+            <Eyebrow size={13}>built by dog people</Eyebrow>
+          </div>
+        </div>
+        <TicketRule />
+        <div style={{ marginTop: 24, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+          <Eyebrow>heylola.co</Eyebrow>
+          <Eyebrow>gate · b2b + retail</Eyebrow>
+          <Eyebrow>seat · 001</Eyebrow>
+        </div>
+      </div>
+    </IGFrame>
+  );
+}
+
+// 03 — Monogram dominant
+// Giant circle mark, minimal type. App-store-style teaser.
+function IG03() {
+  return (
+    <IGFrame>
+      <div style={{ height: '100%', display: 'flex', flexDirection: 'column' }}>
+        <div style={{ padding: '80px 80px 0', display: 'flex', justifyContent: 'space-between' }}>
+          <Eyebrow>the hey lola app</Eyebrow>
+          <Eyebrow>soon</Eyebrow>
+        </div>
+        <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+          <Monogram size={620} />
+        </div>
+        <div style={{ padding: '0 80px 80px' }}>
+          <div style={{
+            fontFamily: CK.fontDisplay, fontWeight: 700, fontSize: 56,
+            letterSpacing: '-0.04em', lineHeight: 1,
+          }}>an ecosystem,<br/>canine-first.</div>
+        </div>
+      </div>
+    </IGFrame>
+  );
+}
+
+// 04 — Split / dual audience (B2B | Retail)
+// Diptych composition calling both audiences at once.
+function IG04() {
+  const cell = (eyebrow, title, body, bg, ink) => (
+    <div style={{
+      flex: 1, background: bg, color: ink,
+      padding: 60, display: 'flex', flexDirection: 'column', justifyContent: 'space-between',
+    }}>
+      <Eyebrow ink={ink}>{eyebrow}</Eyebrow>
+      <div>
+        <div style={{
+          fontFamily: CK.fontDisplay, fontWeight: 700, fontSize: 96,
+          letterSpacing: '-0.05em', lineHeight: 0.95,
+        }}>{title}</div>
+        <div style={{
+          fontFamily: CK.fontBody, fontSize: 22, lineHeight: 1.4, marginTop: 20,
+          opacity: 0.75, maxWidth: 380,
+        }}>{body}</div>
+      </div>
+      <Eyebrow ink={ink}>join us →</Eyebrow>
+    </div>
+  );
+  return (
+    <IGFrame>
+      <div style={{ display: 'flex', height: '100%' }}>
+        {cell('01 · businesses', 'list your\nbrand.', 'Vets, groomers, hotels, brands — get seen by dog people who buy.', CK.paper, CK.ink)}
+        {cell('02 · retail', 'find your\npack.', 'Every good thing for your dog, in one place. Reviewed by owners.', CK.ink, CK.paper)}
+      </div>
+    </IGFrame>
+  );
+}
+
+// 05 — Dog glyph + tagline
+// The architectural dog as the hero, tagline stacked underneath.
+function IG05() {
+  return (
+    <IGFrame bg={CK.warm}>
+      <div style={{ padding: 80, height: '100%', display: 'flex', flexDirection: 'column', justifyContent: 'space-between' }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+          <Wordmark size={28} />
+          <Eyebrow>heylola.co</Eyebrow>
+        </div>
+        <div style={{ display: 'flex', justifyContent: 'center' }}>
+          <DogGlyph size={640} />
+        </div>
+        <div>
+          <div style={{
+            fontFamily: CK.fontDisplay, fontWeight: 700, fontSize: 88,
+            letterSpacing: '-0.05em', lineHeight: 0.95,
+          }}>because we get it.</div>
+          <div style={{
+            fontFamily: CK.fontBody, fontSize: 22, lineHeight: 1.4, marginTop: 20,
+            opacity: 0.7, maxWidth: 560,
+          }}>An app by dog lovers, for dog lovers. Launching 2026.</div>
+        </div>
+      </div>
+    </IGFrame>
+  );
+}
+
+// 06 — Quote-style / editorial
+// Big pull-quote treatment. Small mark bottom corner.
+function IG06() {
+  return (
+    <IGFrame bg={CK.ink}>
+      <div style={{ padding: 80, height: '100%', display: 'flex', flexDirection: 'column', justifyContent: 'space-between', color: CK.paper }}>
+        <Eyebrow ink={CK.paper}>↳ a note to dog people</Eyebrow>
+        <div>
+          <div style={{
+            fontFamily: CK.fontDisplay, fontWeight: 700, fontSize: 110,
+            letterSpacing: '-0.05em', lineHeight: 1, marginLeft: -12,
+          }}>"</div>
+          <div style={{
+            fontFamily: CK.fontDisplay, fontWeight: 500, fontSize: 72,
+            letterSpacing: '-0.03em', lineHeight: 1.05, marginTop: -20,
+          }}>
+            we understand<br/>each other<br/>better.
+          </div>
+        </div>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-end' }}>
+          <Monogram size={72} ink={CK.paper} paper={CK.ink} />
+          <div style={{ textAlign: 'right' }}>
+            <Wordmark size={24} ink={CK.paper} />
+            <div style={{ marginTop: 6 }}><Eyebrow ink={CK.paper} size={10}>join us · heylola.co</Eyebrow></div>
+          </div>
+        </div>
+      </div>
+    </IGFrame>
+  );
+}
+
+Object.assign(window, { IG01, IG02, IG03, IG04, IG05, IG06, IGFrame, IG_SIZE });
+
+
+// Stories / Reels — 9:16, 1080×1920 (rendered scaled)
+
+const ST_W = 1080;
+const ST_H = 1920;
+
+function STFrame({ children, bg = CK.paper }) {
+  return (
+    <div style={{
+      width: ST_W, height: ST_H, background: bg,
+      position: 'relative', overflow: 'hidden',
+      fontFamily: CK.fontBody, color: CK.ink,
+    }}>{children}</div>
+  );
+}
+
+// 01 — Vertical manifesto, tall stack
+function ST01() {
+  return (
+    <STFrame>
+      <div style={{ padding: 100, height: '100%', display: 'flex', flexDirection: 'column', justifyContent: 'space-between' }}>
+        <div>
+          <Eyebrow>✈ heylola.co · 2026</Eyebrow>
+          <div style={{ marginTop: 40 }}>
+            <Wordmark size={44} />
+          </div>
+        </div>
+        <div style={{
+          fontFamily: CK.fontDisplay, fontWeight: 700, fontSize: 180,
+          letterSpacing: '-0.06em', lineHeight: 0.92,
+        }}>
+          from<br/>dog<br/>lovers<br/>to dog<br/>lovers.
+        </div>
+        <div>
+          <TicketRule />
+          <div style={{ marginTop: 32, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+            <Eyebrow>join us</Eyebrow>
+            <Monogram size={80} />
+          </div>
+        </div>
+      </div>
+    </STFrame>
+  );
+}
+
+// 02 — Single word per screen — big "soon"
+function ST02() {
+  return (
+    <STFrame bg={CK.ink}>
+      <div style={{ padding: 100, height: '100%', display: 'flex', flexDirection: 'column', justifyContent: 'space-between', color: CK.paper }}>
+        <Eyebrow ink={CK.paper}>the hey lola app</Eyebrow>
+        <div style={{ textAlign: 'center' }}>
+          <div style={{
+            fontFamily: CK.fontDisplay, fontWeight: 700, fontSize: 420,
+            letterSpacing: '-0.06em', lineHeight: 0.9,
+          }}>soon.</div>
+          <div style={{
+            fontFamily: CK.fontBody, fontSize: 32, opacity: 0.7, marginTop: 40,
+          }}>building an ecosystem,<br/>canine-first.</div>
+        </div>
+        <div style={{ textAlign: 'center' }}>
+          <Wordmark size={36} ink={CK.paper} />
+          <div style={{ marginTop: 12 }}><Eyebrow ink={CK.paper}>heylola.co · join us</Eyebrow></div>
+        </div>
+      </div>
+    </STFrame>
+  );
+}
+
+// 03 — Dog glyph hero
+function ST03() {
+  return (
+    <STFrame bg={CK.cream}>
+      <div style={{ padding: 100, height: '100%', display: 'flex', flexDirection: 'column', justifyContent: 'space-between' }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+          <Wordmark size={40} />
+          <Eyebrow>01 · 06</Eyebrow>
+        </div>
+        <DogGlyph size={900} />
+        <div>
+          <div style={{
+            fontFamily: CK.fontDisplay, fontWeight: 700, fontSize: 130,
+            letterSpacing: '-0.05em', lineHeight: 0.95,
+          }}>because<br/>we get it.</div>
+          <div style={{ marginTop: 40 }}><Eyebrow>join us · heylola.co</Eyebrow></div>
+        </div>
+      </div>
+    </STFrame>
+  );
+}
+
+// 04 — Diptych tall — B2B / Retail stacked
+function ST04() {
+  return (
+    <STFrame>
+      <div style={{ height: '100%', display: 'flex', flexDirection: 'column' }}>
+        <div style={{ flex: 1, padding: 90, display: 'flex', flexDirection: 'column', justifyContent: 'space-between' }}>
+          <Eyebrow>for businesses</Eyebrow>
+          <div style={{
+            fontFamily: CK.fontDisplay, fontWeight: 700, fontSize: 180,
+            letterSpacing: '-0.05em', lineHeight: 0.92,
+          }}>list<br/>your<br/>brand.</div>
+          <div style={{ fontFamily: CK.fontBody, fontSize: 30, opacity: 0.7, maxWidth: 680, lineHeight: 1.4 }}>
+            Vets, groomers, hotels, brands — get seen by dog people who actually buy.
+          </div>
+        </div>
+        <div style={{ flex: 1, padding: 90, background: CK.ink, color: CK.paper, display: 'flex', flexDirection: 'column', justifyContent: 'space-between' }}>
+          <Eyebrow ink={CK.paper}>for retail</Eyebrow>
+          <div style={{
+            fontFamily: CK.fontDisplay, fontWeight: 700, fontSize: 180,
+            letterSpacing: '-0.05em', lineHeight: 0.92,
+          }}>find<br/>your<br/>pack.</div>
+          <div style={{ fontFamily: CK.fontBody, fontSize: 30, opacity: 0.75, maxWidth: 680, lineHeight: 1.4 }}>
+            Every good thing for your dog, reviewed by owners who know.
+          </div>
+        </div>
+      </div>
+    </STFrame>
+  );
+}
+
+// 05 — Boarding pass / ticket stub vertical
+function ST05() {
+  return (
+    <STFrame bg={CK.warm}>
+      <div style={{ padding: '120px 80px', height: '100%', display: 'flex', flexDirection: 'column', justifyContent: 'center' }}>
+        <div style={{ background: CK.paper, padding: '80px 70px', boxShadow: '0 4px 40px rgba(0,0,0,0.08)' }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 60 }}>
+            <Wordmark size={34} />
+            <Eyebrow>boarding pass</Eyebrow>
+          </div>
+          <Eyebrow size={16}>passenger</Eyebrow>
+          <div style={{
+            fontFamily: CK.fontDisplay, fontWeight: 700, fontSize: 140,
+            letterSpacing: '-0.05em', lineHeight: 0.95, marginTop: 16,
+          }}>dog<br/>people.</div>
+          <div style={{ margin: '60px 0' }}><TicketRule /></div>
+          <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+            <div>
+              <Eyebrow size={14}>from</Eyebrow>
+              <div style={{ fontFamily: CK.fontDisplay, fontWeight: 700, fontSize: 52, letterSpacing: '-0.03em', marginTop: 8 }}>everyone</div>
+            </div>
+            <div style={{ fontFamily: CK.fontDisplay, fontWeight: 700, fontSize: 52 }}>→</div>
+            <div>
+              <Eyebrow size={14}>to</Eyebrow>
+              <div style={{ fontFamily: CK.fontDisplay, fontWeight: 700, fontSize: 52, letterSpacing: '-0.03em', marginTop: 8 }}>dog lovers</div>
+            </div>
+          </div>
+          <div style={{ margin: '60px 0' }}><TicketRule /></div>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+            <Eyebrow size={14}>gate · 2026</Eyebrow>
+            <Eyebrow size={14}>seat · join us</Eyebrow>
+          </div>
+        </div>
+      </div>
+    </STFrame>
+  );
+}
+
+// 06 — Phone mockup + headline (product tease)
+function ST06() {
+  return (
+    <STFrame>
+      <div style={{ padding: 100, height: '100%', display: 'flex', flexDirection: 'column', justifyContent: 'space-between' }}>
+        <div>
+          <Eyebrow>the app · preview</Eyebrow>
+          <div style={{
+            fontFamily: CK.fontDisplay, fontWeight: 700, fontSize: 120,
+            letterSpacing: '-0.05em', lineHeight: 0.95, marginTop: 40,
+          }}>one app.<br/>all dog.</div>
+        </div>
+        <div style={{ display: 'flex', justifyContent: 'center' }}>
+          <div style={{ transform: 'scale(1.6)', transformOrigin: 'center' }}>
+            <PhoneFrame width={360} height={740}>
+              <div style={{ padding: '56px 24px 24px', color: CK.ink, height: '100%', display: 'flex', flexDirection: 'column' }}>
+                <div style={{ fontFamily: CK.fontDisplay, fontWeight: 700, fontSize: 28, letterSpacing: '-0.04em' }}>hey, lola 🐕</div>
+                <div style={{ fontFamily: CK.fontBody, fontSize: 13, opacity: 0.6, marginTop: 4 }}>Tuesday, Apr 22</div>
+                {['Vets near you', 'Groomers', 'Pet-friendly hotels', 'Shop', 'Community'].map((t, i) => (
+                  <div key={i} style={{
+                    marginTop: 14, padding: '18px 18px', borderRadius: 16,
+                    background: i === 0 ? CK.ink : CK.cream, color: i === 0 ? CK.paper : CK.ink,
+                    fontFamily: CK.fontDisplay, fontWeight: 600, fontSize: 18, letterSpacing: '-0.02em',
+                    display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+                  }}>
+                    {t}
+                    <span style={{ opacity: 0.7, fontFamily: CK.fontMono, fontSize: 12 }}>→</span>
+                  </div>
+                ))}
+              </div>
+            </PhoneFrame>
+          </div>
+        </div>
+        <div style={{ textAlign: 'center' }}>
+          <Wordmark size={36} />
+          <div style={{ marginTop: 16 }}><Eyebrow>heylola.co · join us</Eyebrow></div>
+        </div>
+      </div>
+    </STFrame>
+  );
+}
+
+Object.assign(window, { ST01, ST02, ST03, ST04, ST05, ST06, STFrame, ST_W, ST_H });
+
+
+// Landing hero, banner, email, app store screenshots
+
+// ─── Landing HERO — full-bleed section used in heylola.co
+function LandingHero() {
+  return (
+    <div style={{
+      width: 1440, minHeight: 900, background: CK.paper,
+      fontFamily: CK.fontBody, color: CK.ink,
+      display: 'flex', flexDirection: 'column',
+    }}>
+      {/* nav */}
+      <div style={{ padding: '36px 64px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: `1px solid ${CK.rule}` }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 14 }}>
+          <Monogram size={40} />
+          <Wordmark size={24} />
+        </div>
+        <div style={{ display: 'flex', gap: 36, fontFamily: CK.fontBody, fontSize: 14, fontWeight: 500 }}>
+          <span>For businesses</span><span>For owners</span><span>About</span><span>Brand</span>
+        </div>
+        <button style={{
+          padding: '12px 20px', background: CK.ink, color: CK.paper,
+          border: 'none', borderRadius: 999, fontFamily: CK.fontBody,
+          fontSize: 14, fontWeight: 500, letterSpacing: '-0.01em',
+        }}>join us →</button>
+      </div>
+
+      {/* hero */}
+      <div style={{ flex: 1, padding: '80px 64px', display: 'grid', gridTemplateColumns: '1.2fr 1fr', gap: 80, alignItems: 'center' }}>
+        <div>
+          <Eyebrow>✈ launching 2026 · heylola.co</Eyebrow>
+          <h1 style={{
+            fontFamily: CK.fontDisplay, fontWeight: 700, fontSize: 128,
+            letterSpacing: '-0.05em', lineHeight: 0.92, margin: '36px 0 0',
+          }}>from dog lovers<br/>to dog lovers.</h1>
+          <p style={{
+            fontFamily: CK.fontBody, fontSize: 22, lineHeight: 1.5,
+            color: CK.muted, marginTop: 36, maxWidth: 600,
+          }}>We're building an ecosystem, canine-first. Where businesses connect with owners who buy — and dog people find the good stuff first.</p>
+          <div style={{ marginTop: 48, display: 'flex', gap: 16 }}>
+            <button style={{ padding: '18px 28px', background: CK.ink, color: CK.paper, border: 'none', borderRadius: 999, fontFamily: CK.fontBody, fontSize: 16, fontWeight: 500 }}>Join us — I'm a dog owner</button>
+            <button style={{ padding: '18px 28px', background: 'transparent', color: CK.ink, border: `1.5px solid ${CK.ink}`, borderRadius: 999, fontFamily: CK.fontBody, fontSize: 16, fontWeight: 500 }}>List my business →</button>
+          </div>
+        </div>
+        <div style={{ display: 'flex', justifyContent: 'center' }}>
+          <PhoneFrame width={360} height={740}>
+            <div style={{ padding: '56px 24px 24px', color: CK.ink, height: '100%', display: 'flex', flexDirection: 'column' }}>
+              <div style={{ fontFamily: CK.fontDisplay, fontWeight: 700, fontSize: 28, letterSpacing: '-0.04em' }}>hey, lola 🐕</div>
+              <div style={{ fontFamily: CK.fontBody, fontSize: 13, opacity: 0.6, marginTop: 4 }}>Tuesday, Apr 22</div>
+              {['Vets near you', 'Groomers', 'Pet-friendly hotels', 'Shop', 'Community'].map((t, i) => (
+                <div key={i} style={{
+                  marginTop: 14, padding: '16px 18px', borderRadius: 16,
+                  background: i === 0 ? CK.ink : CK.cream, color: i === 0 ? CK.paper : CK.ink,
+                  fontFamily: CK.fontDisplay, fontWeight: 600, fontSize: 17, letterSpacing: '-0.02em',
+                  display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+                }}>{t}<span style={{ opacity: 0.7, fontFamily: CK.fontMono, fontSize: 12 }}>→</span></div>
+              ))}
+            </div>
+          </PhoneFrame>
+        </div>
+      </div>
+
+      {/* bottom strip */}
+      <div style={{ borderTop: `1px solid ${CK.rule}`, padding: '24px 64px', display: 'flex', justifyContent: 'space-between' }}>
+        <Eyebrow>building with: vets · groomers · hotels · brands</Eyebrow>
+        <Eyebrow>v1.0 · soon</Eyebrow>
+      </div>
+    </div>
+  );
+}
+
+// ─── WEB BANNER — horizontal 1500×500 (common leaderboard/hero)
+function WebBanner() {
+  return (
+    <div style={{
+      width: 1500, height: 500, background: CK.ink, color: CK.paper,
+      fontFamily: CK.fontBody, display: 'flex', alignItems: 'center',
+      padding: '0 80px', position: 'relative', overflow: 'hidden',
+    }}>
+      <div style={{ flex: 1 }}>
+        <Eyebrow ink={CK.paper}>✈ heylola.co · 2026</Eyebrow>
+        <div style={{
+          fontFamily: CK.fontDisplay, fontWeight: 700, fontSize: 90,
+          letterSpacing: '-0.05em', lineHeight: 0.95, marginTop: 20,
+        }}>from dog lovers<br/>to dog lovers.</div>
+        <div style={{ marginTop: 28, display: 'flex', gap: 16, alignItems: 'center' }}>
+          <div style={{ padding: '14px 22px', background: CK.paper, color: CK.ink, borderRadius: 999, fontWeight: 500, fontSize: 15 }}>Join us →</div>
+          <Eyebrow ink={CK.paper}>for businesses · for owners</Eyebrow>
+        </div>
+      </div>
+      <div style={{ position: 'relative', marginRight: -40 }}>
+        <DogGlyph size={380} ink={CK.paper} />
+      </div>
+    </div>
+  );
+}
+
+// ─── EMAIL — 600px wide, single column
+function LaunchEmail() {
+  return (
+    <div style={{
+      width: 600, background: CK.paper,
+      fontFamily: CK.fontBody, color: CK.ink,
+      border: `1px solid ${CK.rule}`,
+    }}>
+      <div style={{ padding: '28px 40px', borderBottom: `1px solid ${CK.rule}`, display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+          <Monogram size={32} />
+          <Wordmark size={20} />
+        </div>
+        <Eyebrow size={10}>issue 001</Eyebrow>
+      </div>
+
+      <div style={{ padding: '48px 40px' }}>
+        <Eyebrow size={11}>a small announcement</Eyebrow>
+        <h1 style={{
+          fontFamily: CK.fontDisplay, fontWeight: 700, fontSize: 48,
+          letterSpacing: '-0.04em', lineHeight: 1, margin: '24px 0 0',
+        }}>We're building<br/>Hey Lola.</h1>
+        <p style={{ fontSize: 16, lineHeight: 1.6, color: CK.muted, marginTop: 28 }}>
+          Hi — a quick one. We're a small team of dog people building an ecosystem for dog people. An app that connects owners with the businesses, brands and community that actually get it.
+        </p>
+        <p style={{ fontSize: 16, lineHeight: 1.6, color: CK.muted, marginTop: 16 }}>
+          From dog lovers, to dog lovers. Because between us, we understand each other better.
+        </p>
+
+        <div style={{ margin: '40px 0' }}><TicketRule /></div>
+
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 20 }}>
+          {[
+            { t: 'I own a business', s: 'Vet, groomer, hotel, brand? Get on the list before launch.' },
+            { t: "I've got a dog", s: 'Join the beta. Help us shape what you want to see.' },
+          ].map(c => (
+            <div key={c.t} style={{ border: `1px solid ${CK.rule}`, padding: 20, borderRadius: 8 }}>
+              <div style={{ fontFamily: CK.fontDisplay, fontWeight: 700, fontSize: 20, letterSpacing: '-0.02em' }}>{c.t}</div>
+              <div style={{ fontSize: 13, color: CK.muted, marginTop: 8, lineHeight: 1.5 }}>{c.s}</div>
+              <div style={{ marginTop: 14, fontFamily: CK.fontMono, fontSize: 11, letterSpacing: '0.15em', textTransform: 'uppercase' }}>join us →</div>
+            </div>
+          ))}
+        </div>
+
+        <div style={{ marginTop: 40, textAlign: 'center' }}>
+          <a style={{
+            display: 'inline-block', padding: '16px 32px', background: CK.ink,
+            color: CK.paper, borderRadius: 999, fontSize: 15, fontWeight: 500,
+            textDecoration: 'none',
+          }}>Reserve my spot →</a>
+        </div>
+      </div>
+
+      <div style={{ padding: '20px 40px', background: CK.cream, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+        <Eyebrow size={10}>heylola.co</Eyebrow>
+        <Eyebrow size={10}>unsubscribe · privacy</Eyebrow>
+      </div>
+    </div>
+  );
+}
+
+// ─── APP STORE SCREENSHOTS — 3 phones
+const AppShot = ({ title, sub, children, bg = CK.cream }) => (
+  <div style={{ width: 420, display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
+    <div style={{ textAlign: 'center', marginBottom: 24 }}>
+      <div style={{ fontFamily: CK.fontDisplay, fontWeight: 700, fontSize: 32, letterSpacing: '-0.04em', lineHeight: 1.05 }}>{title}</div>
+      <div style={{ fontFamily: CK.fontBody, fontSize: 14, color: CK.muted, marginTop: 10, lineHeight: 1.4, maxWidth: 360 }}>{sub}</div>
+    </div>
+    <PhoneFrame width={360} height={740}>
+      <div style={{ height: '100%', background: bg, padding: '56px 20px 20px', display: 'flex', flexDirection: 'column' }}>
+        {children}
+      </div>
+    </PhoneFrame>
+  </div>
+);
+
+function AppStoreSheet() {
+  return (
+    <div style={{
+      width: 1500, padding: '80px 40px',
+      background: CK.paper, fontFamily: CK.fontBody, color: CK.ink,
+      display: 'flex', flexDirection: 'column', gap: 40,
+    }}>
+      <div style={{ textAlign: 'center' }}>
+        <Eyebrow>App Store · screenshot set</Eyebrow>
+        <div style={{ fontFamily: CK.fontDisplay, fontWeight: 700, fontSize: 44, letterSpacing: '-0.04em', marginTop: 14 }}>Hey Lola on the App Store</div>
+      </div>
+      <div style={{ display: 'flex', justifyContent: 'center', gap: 40 }}>
+        <AppShot title="All dog, one app." sub="Vets, groomers, hotels, brands — curated for the good ones.">
+          <div style={{ fontFamily: CK.fontDisplay, fontWeight: 700, fontSize: 22, letterSpacing: '-0.03em' }}>hey, lola 🐕</div>
+          <div style={{ fontSize: 11, color: CK.muted, marginTop: 2 }}>Tue, Apr 22 · Sunny 68°</div>
+          {['Find a vet', 'Groomers near you', 'Pet-friendly stays', 'Shop', 'Community'].map((t,i)=>(
+            <div key={i} style={{ marginTop: 12, padding: '14px 16px', borderRadius: 14, background: i===0?CK.ink:CK.paper, color: i===0?CK.paper:CK.ink, fontFamily: CK.fontDisplay, fontWeight: 600, fontSize: 15, letterSpacing: '-0.02em', display: 'flex', justifyContent: 'space-between' }}>{t}<span style={{ opacity: 0.6 }}>→</span></div>
+          ))}
+        </AppShot>
+        <AppShot title="Reviewed by dog people." sub="Real owners, real opinions. No filler." bg={CK.paper}>
+          <div style={{ fontFamily: CK.fontDisplay, fontWeight: 700, fontSize: 22, letterSpacing: '-0.03em' }}>Groomers</div>
+          <div style={{ fontSize: 11, color: CK.muted, marginTop: 2 }}>12 nearby · Madrid</div>
+          {[
+            { n: 'La Casa del Perro', r: '4.9', tag: 'friendly · patient' },
+            { n: 'Barkshop', r: '4.8', tag: 'anxious-dog certified' },
+            { n: 'Chez Bruno', r: '4.7', tag: 'big breeds welcome' },
+          ].map((s,i)=>(
+            <div key={i} style={{ marginTop: 12, padding: 14, borderRadius: 14, background: CK.cream }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                <div style={{ fontFamily: CK.fontDisplay, fontWeight: 700, fontSize: 15, letterSpacing: '-0.02em' }}>{s.n}</div>
+                <div style={{ fontFamily: CK.fontMono, fontSize: 12 }}>★ {s.r}</div>
+              </div>
+              <div style={{ fontSize: 11, color: CK.muted, marginTop: 6, fontFamily: CK.fontMono, letterSpacing: '0.1em', textTransform: 'uppercase' }}>{s.tag}</div>
+            </div>
+          ))}
+        </AppShot>
+        <AppShot title="List your brand." sub="Vets, retailers, hotels — meet the owners who already love you.">
+          <div style={{ fontFamily: CK.fontDisplay, fontWeight: 700, fontSize: 22, letterSpacing: '-0.03em' }}>For business</div>
+          <div style={{ fontSize: 11, color: CK.muted, marginTop: 2 }}>Partner dashboard</div>
+          <div style={{ marginTop: 16, padding: 20, borderRadius: 14, background: CK.ink, color: CK.paper }}>
+            <div style={{ fontFamily: CK.fontMono, fontSize: 10, letterSpacing: '0.2em', textTransform: 'uppercase', opacity: 0.7 }}>this week</div>
+            <div style={{ fontFamily: CK.fontDisplay, fontWeight: 700, fontSize: 44, letterSpacing: '-0.04em', marginTop: 8 }}>+184</div>
+            <div style={{ fontSize: 12, opacity: 0.7, marginTop: 4 }}>new profile views</div>
+          </div>
+          {['Claim your listing', 'Post an offer', 'Answer owners'].map((t,i)=>(
+            <div key={i} style={{ marginTop: 10, padding: '12px 14px', borderRadius: 12, background: CK.cream, fontFamily: CK.fontDisplay, fontWeight: 600, fontSize: 14, letterSpacing: '-0.02em', display: 'flex', justifyContent: 'space-between' }}>{t}<span style={{ opacity: 0.5 }}>+</span></div>
+          ))}
+        </AppShot>
+      </div>
+    </div>
+  );
+}
+
+Object.assign(window, { LandingHero, WebBanner, LaunchEmail, AppStoreSheet });
+
+
+// Index app — lays out all campaign pieces on a design canvas
+
+function Frame({ label, variant, children, fitW, fitH, scale, bg = CK.warm }) {
+  return (
+    <DCArtboard label={null} width={fitW} height={fitH + 70} style={{ background: 'transparent', boxShadow: 'none' }}>
+      <div style={{
+        width: fitW, height: fitH, background: bg,
+        display: 'flex', alignItems: 'center', justifyContent: 'center',
+        boxShadow: '0 1px 3px rgba(0,0,0,0.08), 0 8px 40px rgba(0,0,0,0.06)',
+        overflow: 'hidden',
+      }}>
+        <div style={{ transform: `scale(${scale})`, transformOrigin: 'center' }}>
+          {children}
+        </div>
+      </div>
+      <div style={{ padding: '14px 2px 0' }}>
+        <div style={{ fontFamily: CK.fontMono, fontSize: 10, fontWeight: 500, letterSpacing: '0.18em', textTransform: 'uppercase', color: 'rgba(10,10,10,0.45)' }}>{variant}</div>
+        <div style={{ fontFamily: CK.fontBody, fontSize: 14, fontWeight: 500, color: 'rgba(10,10,10,0.85)', marginTop: 2 }}>{label}</div>
+      </div>
+    </DCArtboard>
+  );
+}
+
+function Header() {
+  return (
+    <div style={{ padding: '0 60px 50px', maxWidth: 1200 }}>
+      <div style={{ fontFamily: CK.fontMono, fontSize: 11, fontWeight: 500, letterSpacing: '0.22em', textTransform: 'uppercase', color: 'rgba(10,10,10,0.5)', marginBottom: 14 }}>
+        Hey Lola · launch campaign · v1
+      </div>
+      <div style={{ fontFamily: CK.fontDisplay, fontSize: 64, fontWeight: 700, letterSpacing: '-0.05em', color: CK.ink, lineHeight: 1, marginBottom: 18 }}>
+        from dog lovers,<br/>to dog lovers.
+      </div>
+      <div style={{ fontFamily: CK.fontBody, fontSize: 17, color: 'rgba(10,10,10,0.7)', lineHeight: 1.5, maxWidth: 640 }}>
+        Six pieces covering launch: Instagram (6 variations), Stories/Reels (6 variations), landing hero, web banner, announcement email, and an App Store screenshot set. All B&W, all Space Grotesk, all speaking to both audiences — businesses and owners.
+      </div>
+    </div>
+  );
+}
+
+function App() {
+  return (
+    <DesignCanvas>
+      <Header />
+
+      <DCSection title="01 · Instagram · 1:1" subtitle="1080×1080. Six compositional angles — scroll right to see them all.">
+        <Frame variant="ig · 01" label="Manifesto — big type" fitW={480} fitH={480} scale={0.444}><IG01 /></Frame>
+        <Frame variant="ig · 02" label="Ticket stub" fitW={480} fitH={480} scale={0.444}><IG02 /></Frame>
+        <Frame variant="ig · 03" label="Monogram hero" fitW={480} fitH={480} scale={0.444}><IG03 /></Frame>
+        <Frame variant="ig · 04" label="B2B + retail diptych" fitW={480} fitH={480} scale={0.444}><IG04 /></Frame>
+        <Frame variant="ig · 05" label="Dog glyph" fitW={480} fitH={480} scale={0.444}><IG05 /></Frame>
+        <Frame variant="ig · 06" label="Editorial quote" fitW={480} fitH={480} scale={0.444}><IG06 /></Frame>
+      </DCSection>
+
+      <DCSection title="02 · Stories & Reels · 9:16" subtitle="1080×1920. Covers for IG Stories, Reels, TikTok.">
+        <Frame variant="st · 01" label="Vertical manifesto" fitW={280} fitH={498} scale={0.259}><ST01 /></Frame>
+        <Frame variant="st · 02" label="One word — 'soon.'" fitW={280} fitH={498} scale={0.259}><ST02 /></Frame>
+        <Frame variant="st · 03" label="Dog glyph hero" fitW={280} fitH={498} scale={0.259}><ST03 /></Frame>
+        <Frame variant="st · 04" label="Diptych tall" fitW={280} fitH={498} scale={0.259}><ST04 /></Frame>
+        <Frame variant="st · 05" label="Boarding pass" fitW={280} fitH={498} scale={0.259}><ST05 /></Frame>
+        <Frame variant="st · 06" label="Phone preview" fitW={280} fitH={498} scale={0.259}><ST06 /></Frame>
+      </DCSection>
+
+      <DCSection title="03 · Landing hero" subtitle="1440-wide. The top section of heylola.co on launch day.">
+        <Frame variant="web · landing" label="Hero section with phone mockup" fitW={1152} fitH={720} scale={0.8}><LandingHero /></Frame>
+      </DCSection>
+
+      <DCSection title="04 · Web banner" subtitle="1500×500. Horizontal, dark. For retargeting, site takeovers, paid media.">
+        <Frame variant="web · banner" label="Leaderboard — from dog lovers, to dog lovers." fitW={1200} fitH={400} scale={0.8}><WebBanner /></Frame>
+      </DCSection>
+
+      <DCSection title="05 · Announcement email" subtitle="600px wide, single-column. Sent to the pre-launch list.">
+        <Frame variant="email · 001" label="The 'we're building Hey Lola' email" fitW={600} fitH={900} scale={1} bg={CK.paper}><LaunchEmail /></Frame>
+      </DCSection>
+
+      <DCSection title="06 · App Store screenshots" subtitle="Three-shot set for the listing. Headline + phone per screen.">
+        <Frame variant="store · sheet" label="All three screenshots" fitW={1200} fitH={900} scale={0.8}><AppStoreSheet /></Frame>
+      </DCSection>
+
+      <div style={{ padding: '0 60px 120px', maxWidth: 900 }}>
+        <div style={{ fontFamily: CK.fontMono, fontSize: 11, fontWeight: 500, letterSpacing: '0.22em', textTransform: 'uppercase', color: 'rgba(10,10,10,0.5)', marginBottom: 14 }}>Next</div>
+        <div style={{ fontFamily: CK.fontDisplay, fontSize: 32, fontWeight: 700, letterSpacing: '-0.03em', color: CK.ink, lineHeight: 1.1, marginBottom: 18 }}>Pick the winners. I'll refine.</div>
+        <ul style={{ fontFamily: CK.fontBody, fontSize: 16, color: 'rgba(10,10,10,0.75)', lineHeight: 1.6, paddingLeft: 20 }}>
+          <li>Which IG posts to run first? I'd propose 01 + 04 + 05 as a three-post drop.</li>
+          <li>Email copy is a placeholder — send me the real voice and I'll rewrite.</li>
+          <li>The dog glyph is a sketch placeholder; swap in photography when ready.</li>
+        </ul>
+      </div>
+    </DesignCanvas>
+  );
+}
+
+const root = ReactDOM.createRoot(document.getElementById('root'));
+root.render(<App />);
+
+</script>
+</body>
+</html>
